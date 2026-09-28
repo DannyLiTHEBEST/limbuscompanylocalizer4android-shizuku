@@ -1,4 +1,4 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.limbusshizuku" android:versionCode="3" android:versionName="1.0.2">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.limbusshizuku" android:versionCode="5" android:versionName="1.0.4">
     <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="32"/>
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="moe.shizuku.manager.permission.API_V23"/>
@@ -9,5 +9,6 @@
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
         </activity>
+        <service android:name=".PatchUserService" android:process=":user_service" android:exported="false"/>
     </application>
 </manifest>

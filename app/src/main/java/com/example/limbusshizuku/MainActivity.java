@@ -6,6 +6,12 @@ import android.content.pm.PackageManager;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.graphics.Color;
+import android.content.ComponentName;
+import android.content.ServiceConnection;
+import android.os.IBinder;
+import android.os.Parcel;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import android.widget.*;
 import java.io.*;
 import java.security.MessageDigest;
@@ -14,7 +20,7 @@ import rikka.shizuku.Shizuku;
 
 public class MainActivity extends Activity {
   private static final String GAME="com.ProjectMoon.LimbusCompany";
-  private static final String DEST="/sdcard/Android/data/"+GAME+"/files/Assets/Resources_moved/Localize/jp";
+  private static final String DEST_SUFFIX="/Android/data/"+GAME+"/files/Assets/Resources_moved/Localize/jp";
   private static final String TMP="/data/local/tmp/limbus-shizuku-jp-update.zip";
   private static final int REQUEST_SHIZUKU=18027;
   private TextView status; private Button before, after, update;
@@ -82,8 +88,13 @@ public class MainActivity extends Activity {
     if(selected==null && version.equals(PatchRepository.BUILTIN_VERSION))selected=patches.bundled(version);
     if(selected==null && post)throw new IOException("本地没有匹配游戏 v"+version+" 的已验证补丁；请先在游戏退出时点击联网检查并缓存，不能在下载后窗口临时联网。");
     if(selected==null)throw new IOException("找不到与游戏 v"+version+" 匹配且验证通过的汉化包；不会跨版本覆盖。"+note);
-    String base="set -eu\nGAME="+sq(GAME)+"\nDEST="+sq(DEST)+"\nTMP="+sq(TMP)+"\n";
+    if(uid==0)return invokeUserService(selected.file.getAbsolutePath(),version,post,selected.ui,selected.keywords);
+    String base="set -eu\nGAME="+sq(GAME)+"\nSUFFIX="+sq(DEST_SUFFIX)+"\nTMP="+sq(TMP)+"\n";
     String check=base+
+      "ROOT=\"\"\nfor p in /mnt/androidwritable/0/emulated\"$SUFFIX\" /mnt/installer/0/emulated\"$SUFFIX\" /storage/emulated/0\"$SUFFIX\" /sdcard\"$SUFFIX\" /mnt/pass_through/0/emulated\"$SUFFIX\" /mnt/user/0/emulated\"$SUFFIX\" /data/media/0\"$SUFFIX\"; do if [ -d \"$p\" ]; then ROOT=\"$p\"; break; fi; done\n"+
+      "[ -n \"$ROOT\" ] || { echo '找不到游戏日语目录；Sui/ADB shell 的挂载视图未暴露 Android/data'; id; echo '候选路径:'; for q in /sdcard /storage/emulated/0 /mnt/pass_through/0/emulated /mnt/user/0/emulated /data/media/0; do echo \"$q: $(ls -ld \"$q\" 2>&1 | head -1)\"; done; echo '相关挂载:'; cat /proc/self/mountinfo | grep -E 'emulated|pass_through|androidwritable|installer' | head -12; exit 2; }\n"+
+      "DEST=\"$ROOT\"\nSTORAGE=\"${ROOT%$SUFFIX}\"\n[ -d \"$STORAGE\" ] || { echo '找到目录但无法定位其存储根目录'; exit 2; }\n"+
+      "echo \"使用目标目录: $DEST\"\n"+
       "V=$(dumpsys package \"$GAME\" | sed -n 's/^[[:space:]]*versionName=//p' | head -n 1)\n"+
       "[ \"$V\" = "+sq(version)+" ] || { echo '游戏版本在操作中变化，请重试'; exit 2; }\n"+
       (post?"pidof \"$GAME\" >/dev/null || { echo '游戏进程不存在；请先启动游戏并完成下载'; exit 2; }\n"+
@@ -99,12 +110,19 @@ public class MainActivity extends Activity {
     Result streamed=streamZip(selected.file);if(streamed.code!=0)return "✗ 资源传输失败："+streamed.output;
     String apply=base+"trap 'rm -f \"$TMP\"' EXIT\n"+
       "[ \"$(sha256sum \"$TMP\" | cut -d ' ' -f 1)\" = "+sq(selected.sha)+" ] || { echo '传输后校验失败'; exit 4; }\n"+
-      "unzip -oq \"$TMP\" -d /sdcard || { echo '解压失败；部分文件可能已经写入'; exit 4; }\n"+
+      "unzip -oq \"$TMP\" -d \"$STORAGE\" || { echo '解压失败；部分文件可能已经写入'; exit 4; }\n"+
       "[ \"$(sha256sum \"$DEST/JP_MainUIText.json\" | cut -d ' ' -f 1)\" = "+sq(selected.ui)+" ] || { echo '主界面文件验证失败'; exit 4; }\n"+
       "[ \"$(sha256sum \"$DEST/JP_BattleKeywords.json\" | cut -d ' ' -f 1)\" = "+sq(selected.keywords)+" ] || { echo '战斗文件验证失败'; exit 4; }\n"+
       "echo '已验证关键汉化文件'\n";
     Result r=run(apply);if(r.code!=0)return "✗ "+r.output;
     return "✓ 使用"+selected.source+" v"+version+"；"+r.output+(note.isEmpty()?"":"\n"+note)+(post?"\n请从最近任务切回原游戏，不要重新启动。":"\n现在打开游戏；下载完成、标题页重新显示后按 Home，再点②。");
+  }
+  private String invokeUserService(String archive,String version,boolean post,String ui,String key)throws Exception{
+    final CountDownLatch connected=new CountDownLatch(1), gone=new CountDownLatch(1);final IBinder[] binder=new IBinder[1];
+    ServiceConnection conn=new ServiceConnection(){public void onServiceConnected(ComponentName n,IBinder b){binder[0]=b;connected.countDown();}public void onServiceDisconnected(ComponentName n){gone.countDown();}};
+    Shizuku.UserServiceArgs args=new Shizuku.UserServiceArgs(new ComponentName(this,PatchUserService.class)).tag("limbus-patch-user-service").version(1).processNameSuffix("limbus-user-service").debuggable(false).daemon(false);
+    Shizuku.bindUserService(args,conn);if(!connected.await(12,TimeUnit.SECONDS))throw new IOException("UserService 启动超时；请确认 Shizuku/Sui UserService 可用");
+    Parcel in=Parcel.obtain(),out=Parcel.obtain();try{in.writeString(archive);in.writeString(version);in.writeInt(post?1:0);in.writeString(ui);in.writeString(key);binder[0].transact(PatchUserService.APPLY,in,out,0);out.readException();int error=out.readInt();String result=out.readString();if(error!=0)throw new IOException(result);return "✓ UserService: "+result+(post?"\n请从最近任务切回原游戏，不要重新启动。":"\n现在打开游戏；下载完成、标题页重新显示后按 Home，再点②。");}finally{in.recycle();out.recycle();Shizuku.unbindUserService(args,conn,true);}
   }
   private static class Result{final int code;final String output;Result(int c,String s){code=c;output=s;}}
   private Process proc(String script)throws Exception{
