@@ -1,0 +1,11 @@
+.gradle/
+.gradle-cache/
+**/build/
+local.properties
+*.iml
+.idea/
+*.jks
+*.keystore
+*.apk
+!app/src/main/assets/jp.zip
+.DS_Store
