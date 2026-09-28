@@ -13,5 +13,5 @@ dependencyResolutionManagement {
         google(); mavenCentral()
     }
 }
-rootProject.name = 'LimbusShizukuPatchHelper'
+rootProject.name = 'limbuscompanylocalizer4android-shizuku'
 include ':app'
